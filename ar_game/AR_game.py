@@ -29,28 +29,42 @@ DEBUG_MASK = False  # Show mask used for hand detection
 # ---------- Camera thread ----------
 class CameraThread:
     def __init__(self, video_id):
-        self.cap = cv2.VideoCapture(video_id)
+        self.cap = cv2.VideoCapture(video_id, cv2.CAP_DSHOW)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        self._set_max_resolution()
         self.frame = None
         self.lock = threading.Lock()
         self.running = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
-
+ 
+    def _set_max_resolution(self):
+        resolutions = [(1280, 720), (640, 480)]
+        for w, h in resolutions:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+            aw = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            ah = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            if (aw, ah) == (w, h):
+                print(f"Camera resolution: {w}x{h}")
+                return
+ 
     def _loop(self):
         while self.running:
             ret, frame = self.cap.read()
             if ret:
                 with self.lock:
                     self.frame = frame
-
+ 
     def read(self):
         with self.lock:
             return self.frame.copy() if self.frame is not None else None
-
+ 
     def release(self):
         self.running = False
         self.thread.join(timeout=1.0)
         self.cap.release()
+
 
 
 # ---------- Setup ----------
@@ -64,7 +78,6 @@ first_frame = None
 while first_frame is None:
     first_frame = cap.read()
 WINDOW_HEIGHT, WINDOW_WIDTH = first_frame.shape[:2]
-print(f"Webcam resolution: {WINDOW_WIDTH} x {WINDOW_HEIGHT}")
 
 SCALE = min(WINDOW_WIDTH, WINDOW_HEIGHT) / 720.0
 
@@ -190,8 +203,7 @@ def draw_finger_overlay(board, fingertip):
 
 
 def draw_border(board, color):
-    cv2.rectangle(board, (0, 0), (WINDOW_WIDTH - 1, WINDOW_HEIGHT - 1),
-                  color, px(8))
+    cv2.rectangle(board, (0, 0), (WINDOW_WIDTH - 1, WINDOW_HEIGHT - 1), color, px(8))
 
 
 # ---------- Game hooks ----------
@@ -216,16 +228,16 @@ def update(dt):
         state['stale_frames'] = 0
         display = cv2.flip(board.copy(), 1)  # Flip horizontally for more intuitive interaction
         fingertip = find_fingertip(display)
-        border_color = (0, 255, 0)  # green
+        border_color = (0, 255, 0)  # Green border when board is detected
     elif state['last_board'] is not None and state['stale_frames'] < MAX_STALE_FRAMES:
         state['stale_frames'] += 1
         display = cv2.flip(state['last_board'].copy(), 1)
         fingertip = find_fingertip(display)
-        border_color = (0, 165, 255)  # orange
+        border_color = (0, 165, 255)  # Orange border when showing stale board after losing detection
     else:
         display = cv2.flip(frame, 1)
         fingertip = None
-        border_color = (0, 0, 255)  # red
+        border_color = (0, 0, 255)  # Red border when no board is detected
 
     update_game(fingertip, dt)
     draw_game_overlay(display)
