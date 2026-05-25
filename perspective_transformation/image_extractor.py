@@ -1,5 +1,6 @@
 import argparse
 import sys
+from pathlib import Path
 import cv2
 import numpy as np
 
@@ -23,19 +24,20 @@ class ImageExtractor:
 
         if len(self.points) >= 2:
             for i in range(len(self.points) - 1):
+                # Draw lines between consecutive points
                 cv2.line(display, self.points[i], self.points[i + 1], (0, 255, 0), 2, cv2.LINE_AA)
             if len(self.points) == 4:
-                # close the polygon by connecting the last point to the first
+                # Close the polygon by connecting the last point to the first
                 cv2.line(display, self.points[3], self.points[0], (0, 255, 0), 2, cv2.LINE_AA)
 
         for i, p in enumerate(self.points):
             cv2.circle(display, p, 6, (0, 255, 0), -1, cv2.LINE_AA)
             cv2.circle(display, p, 7, (0, 0, 0), 2, cv2.LINE_AA)
             cv2.putText(display, str(i + 1), (p[0] + 10, p[1] - 10),
-                        cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 0, 255), 1,
+                        cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 255, 255), 1,
                         cv2.LINE_AA)
 
-        # status banner in the top-left corner
+        # Status banner in the top-left corner
         msg = f"Points: {len(self.points)}/4   (ESC: reset, Q: quit)"
         cv2.putText(display, msg, (10, 25),
                     cv2.FONT_HERSHEY_DUPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
@@ -84,8 +86,8 @@ class ImageExtractor:
         pts = np.array(pts, dtype="float32")
         rect = np.zeros((4, 2), dtype="float32")
         s = pts.sum(axis=1)
-        rect[0] = pts[np.argmin(s)]   # top-left  (smallest x+y)
-        rect[2] = pts[np.argmax(s)]   # bottom-right (largest x+y)
+        rect[0] = pts[np.argmin(s)]     # top-left  (smallest x+y)
+        rect[2] = pts[np.argmax(s)]     # bottom-right (largest x+y)
         diff = np.diff(pts, axis=1)
         rect[1] = pts[np.argmin(diff)]  # top-right (smallest y-x)
         rect[3] = pts[np.argmax(diff)]  # bottom-left (largest y-x)
@@ -97,6 +99,24 @@ class ImageExtractor:
         if cv2.getWindowProperty(RESULT_WINDOW_TITLE, cv2.WND_PROP_VISIBLE) >= 1:
             cv2.destroyWindow(RESULT_WINDOW_TITLE)
 
+    def _save(self):
+        out = Path(self.output_path)
+        if out.parent and not out.parent.exists():
+            out.parent.mkdir(parents=True, exist_ok=True)
+
+        # If the file already exists, append a number to avoid overwriting
+        final = out
+        counter = 1
+        while final.exists():
+            final = out.with_name(f"{out.stem}_{counter}{out.suffix}")
+            counter += 1
+
+        if cv2.imwrite(str(final), self.warped):
+            print(f"Saved warped image to: {final}")
+            return True
+        print(f"Failed to save image to: {final}", file=sys.stderr)
+        return False
+
     def run(self):
         cv2.namedWindow(SELECTION_WINDOW_TITLE)
         cv2.setMouseCallback(SELECTION_WINDOW_TITLE, self._mouse_callback)
@@ -104,19 +124,13 @@ class ImageExtractor:
         print("  ESC: reset selection   S: save warped image   Q: quit")
 
         while True:
-            # Quit if the selection window was closed via the X button
-            if cv2.getWindowProperty(SELECTION_WINDOW_TITLE, cv2.WND_PROP_VISIBLE) < 1:
-                break
-
             self._draw_overlay()
-
             key = cv2.waitKey(1) & 0xFF
             if key == 27:  # ESC to reset
                 self._reset()
             elif key == ord('s') and self.warped is not None:  # S to save
-                cv2.imwrite(self.output_path, self.warped)
-                print(f"Saved warped image to: {self.output_path}")
-                break
+                if self._save():
+                    break
             elif key == ord('q'):  # Q to quit without saving
                 break
 
@@ -125,12 +139,10 @@ class ImageExtractor:
 
 def main():
     parser = argparse.ArgumentParser(description="Extract a perspective-warped image from an image.")
-    parser.add_argument("input", help="Path to input image")
-    parser.add_argument("output", help="Path to save the warped output image")
-    parser.add_argument("--width", type=int, default=None,
-                        help="Output width in pixels (default: auto from selected points)")
-    parser.add_argument("--height", type=int, default=None,
-                        help="Output height in pixels (default: auto from selected points)")
+    parser.add_argument("-i", "--input", required=True, help="Path to input image")
+    parser.add_argument("-o", "--output", required=True, help="Path to save the warped output image")
+    parser.add_argument("--width", type=int, default=None, help="Output width in pixels (default: auto from selected points)")
+    parser.add_argument("--height", type=int, default=None, help="Output height in pixels (default: auto from selected points)")
     args = parser.parse_args()
 
     if (args.width is None) != (args.height is None):
