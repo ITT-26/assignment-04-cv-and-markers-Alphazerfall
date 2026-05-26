@@ -30,7 +30,7 @@ MIN_HAND_AREA = 1500
 
 # --- App ---
 UPDATE_HZ = 30
-DEBUG_MASK = False  # show mask used for hand detection in a separate window
+DEBUG_MASK = True  # show mask used for hand detection in a separate window
 
 # --- Game ---
 GAME_DURATION = 60.0  # seconds per round
@@ -164,12 +164,17 @@ def find_fingertip(board_bgr):
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     mask = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, blockSize=91, C=15)
 
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    # Small kernel opening to remove white specks, then large closing to close hand blobs
+    open_kernel  = np.ones((5, 5), np.uint8)
+    close_kernel = np.ones((21, 21), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  open_kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
 
-    # Remove the noisy border area
-    zero_border(ZERO_BORDER_PX, px(45 * scale))
+    # Fill contour interiors to get solid blobs
+    ext, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(mask, ext, -1, 255, cv2.FILLED)
+
+    zero_border(mask, px(ZERO_BORDER_PX * scale))
 
     if DEBUG_MASK:
         cv2.imshow("debug_mask", mask)
@@ -178,14 +183,15 @@ def find_fingertip(board_bgr):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
-    largest = max(contours, key=cv2.contourArea)
-    # Ignore small contours that are unlikely to be a hand
-    if cv2.contourArea(largest) < MIN_HAND_AREA * scale ** 2:
+
+    # Find highest point across all hand-sized blobs so a small fingertip beats a larger palm blob
+    significant = [c for c in contours if cv2.contourArea(c) >= MIN_HAND_AREA * scale ** 2]
+    if not significant:
         return None
 
-    pts = largest.reshape(-1, 2)
-    # Assume the fingertip is the point with the smallest y-coordinate
-    tip = pts[np.argmin(pts[:, 1])]
+    # Get the single highest point among all significant contours
+    all_pts = np.vstack(significant).reshape(-1, 2)
+    tip = all_pts[np.argmin(all_pts[:, 1])]
 
     inv = 1.0 / scale
     return (int(tip[0] * inv), int(tip[1] * inv))
