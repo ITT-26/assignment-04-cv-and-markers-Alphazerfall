@@ -57,10 +57,9 @@ python AR_game.py [VIDEO_ID]
 
 **Arguments**
 
-| parameter | required? | default |
-|-----------|-----------|---------|
+| parameter | description | required? | default |
+|-----------|-------------|-----------|---------|
 | `VIDEO_ID` | index of the webcam to use. On PCs with multiple cameras, try `1` if `0` is the wrong one. | no | `0` |
-
 
 **Setup**
 
