@@ -24,7 +24,7 @@ MIN_HAND_AREA = 1500
 
 # --- App ---
 UPDATE_HZ = 30
-DEBUG_MASK = True  # show mask used for hand detection in a separate window
+DEBUG_MASK = False  # show mask used for hand detection in a separate window
 
 # --- Game ---
 GAME_DURATION = 60.0             # seconds per round
@@ -63,7 +63,7 @@ class CameraThread:
         self.thread.start()
 
     def _set_max_resolution(self):
-        resolutions = [(1920, 1080), (1280, 720), (640, 480)]
+        resolutions = [(1280, 720), (640, 480)]
         for w, h in resolutions:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)

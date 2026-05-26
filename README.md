@@ -60,3 +60,34 @@ python AR_game.py [VIDEO_ID]
 | parameter | required? | default |
 |-----------|-----------|---------|
 | `VIDEO_ID` | index of the webcam to use. On PCs with multiple cameras, try `1` if `0` is the wrong one. | no | `0` |
+
+
+**Setup**
+
+Print four ArUco markers from the `DICT_6X6_250` dictionary with IDs `0`, `1`, `2`, `3` and place them on the corners of a flat surface: top-left = `0`, top-right = `1`, bottom-right = `2`, bottom-left = `3`. Point your webcam at the board so all four markers are visible.
+
+**Gameplay**
+
+The region between the four markers is detected, perspective-warped to fill the window, and mirrored. Reach into the board with one pointing finger — a red dot marks the detected fingertip.
+
+- On the menu screen, hold your finger over the **START** button to begin a round.
+- During the round, hold your finger on a mole for a few frames to whack it. Score as many hits as you can in 60 seconds.
+- Moles fade in when they appear and fade out as their time runs out, so you can see how long you have to react.
+- On the result screen, hold your finger over **PLAY AGAIN** for another round.
+
+**Border colors**
+
+The border around the window indicates the tracking state:
+
+| Color  | Meaning |
+|--------|---------|
+| Green  | All four markers detected: tracking is live. |
+| Orange | Markers temporarily lost: the last known board is shown for a short grace period so brief occlusions don't reset the game. |
+| Red    | No board available: move the camera so all four markers are visible again. |
+
+**Keyboard shortcuts**
+
+| Key | Action |
+|-----|--------|
+| `R` | Restart the current round. |
+| `Q` | Quit the game. |
