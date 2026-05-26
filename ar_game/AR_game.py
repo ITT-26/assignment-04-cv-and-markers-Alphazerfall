@@ -1,11 +1,16 @@
+import os
+import sys
+
+# Disabling the Windows Media Foundation hardware transforms allows the Logitech C920 to properly deliver MJPG frames at 1080p
+# Must be set before cv2 is imported to take effect on Windows (MSMF backend). Harmless on other platforms.
+os.environ.setdefault("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0")
+
 import cv2
 import cv2.aruco as aruco
 import numpy as np
 import pyglet
 import random
 import threading
-from PIL import Image
-import sys
 
 
 # ---------- Constants ----------
@@ -19,7 +24,8 @@ DETECT_SCALE = 1.0
 MAX_STALE_FRAMES = 15  # how many frames to keep showing the last board after losing detection
 
 # --- Hand detection ---
-HAND_DETECT_SCALE = 0.5
+HAND_DETECT_MAX_W = 640  # cap finger-detection input width regardless of camera resolution
+ZERO_BORDER_PX = 45  # border area to ignore for hand detection, as it often contains noise
 MIN_HAND_AREA = 1500
 
 # --- App ---
@@ -27,7 +33,7 @@ UPDATE_HZ = 30
 DEBUG_MASK = False  # show mask used for hand detection in a separate window
 
 # --- Game ---
-GAME_DURATION = 60.0             # seconds per round
+GAME_DURATION = 60.0  # seconds per round
 GRID_COLS = 3
 GRID_ROWS = 3
 MOLE_RADIUS = 65
@@ -37,9 +43,9 @@ MOLE_MAX_GAP = 1.1
 MAX_ACTIVE_MOLES = 2
 HIT_HOVER_FRAMES = 3
 
-# Palette (BGR)
+# Color Palette (BGR)
 COL_BG_PANEL    = (40, 40, 40)
-COL_ACCENT      = (90, 200, 255)   # warm amber
+COL_ACCENT      = (90, 200, 255)  # warm amber
 COL_TEXT        = (255, 255, 255)
 COL_TEXT_DARK   = (30, 30, 30)
 COL_MOLE_BODY   = (60, 100, 170)
@@ -53,7 +59,8 @@ COL_BUTTON_TXT  = (20, 20, 20)
 # ---------- Camera thread ----------
 class CameraThread:
     def __init__(self, video_id):
-        self.cap = cv2.VideoCapture(video_id, cv2.CAP_DSHOW)
+        backend = cv2.CAP_MSMF if sys.platform == 'win32' else cv2.CAP_ANY
+        self.cap = cv2.VideoCapture(video_id, backend)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         self._set_max_resolution()
         self.frame = None
@@ -91,20 +98,6 @@ class CameraThread:
 
 
 # ---------- Helpers ----------
-def cv2glet(img, fmt):
-    if fmt == 'GRAY':
-        rows, cols = img.shape
-        channels = 1
-    else:
-        rows, cols, channels = img.shape
-    raw_img = Image.fromarray(img).tobytes()
-    bytes_per_row = channels * cols
-    return pyglet.image.ImageData(
-        width=cols, height=rows, fmt=fmt,
-        data=raw_img, pitch=-bytes_per_row,
-    )
-
-
 def px(v):
     return max(1, int(round(v * SCALE)))
 
@@ -164,7 +157,9 @@ def detect_board(frame):
 
 
 def find_fingertip(board_bgr):
-    small = cv2.resize(board_bgr, None, fx=HAND_DETECT_SCALE, fy=HAND_DETECT_SCALE)
+    h, w = board_bgr.shape[:2]
+    scale = min(1.0, HAND_DETECT_MAX_W / w)
+    small = cv2.resize(board_bgr, (int(w * scale), int(h * scale)))
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     mask = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, blockSize=91, C=15)
@@ -174,7 +169,7 @@ def find_fingertip(board_bgr):
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     # Remove the noisy border area
-    zero_border(mask, px(45 * HAND_DETECT_SCALE))
+    zero_border(ZERO_BORDER_PX, px(45 * scale))
 
     if DEBUG_MASK:
         cv2.imshow("debug_mask", mask)
@@ -185,14 +180,14 @@ def find_fingertip(board_bgr):
         return None
     largest = max(contours, key=cv2.contourArea)
     # Ignore small contours that are unlikely to be a hand
-    if cv2.contourArea(largest) < MIN_HAND_AREA * HAND_DETECT_SCALE ** 2:
+    if cv2.contourArea(largest) < MIN_HAND_AREA * scale ** 2:
         return None
 
     pts = largest.reshape(-1, 2)
     # Assume the fingertip is the point with the smallest y-coordinate
     tip = pts[np.argmin(pts[:, 1])]
 
-    inv = 1.0 / HAND_DETECT_SCALE
+    inv = 1.0 / scale
     return (int(tip[0] * inv), int(tip[1] * inv))
 
 
@@ -240,9 +235,9 @@ def draw_text_centered(board, text, center, font_scale, color, thickness, outlin
 
 
 def draw_panel(board, top_left, bottom_right, color=COL_BG_PANEL, alpha=0.75):
-    overlay = board.copy()
-    cv2.rectangle(overlay, top_left, bottom_right, color, -1, cv2.LINE_AA)
-    cv2.addWeighted(overlay, alpha, board, 1 - alpha, 0, board)
+    np.copyto(_overlay_buf, board)
+    cv2.rectangle(_overlay_buf, top_left, bottom_right, color, -1, cv2.LINE_AA)
+    cv2.addWeighted(_overlay_buf, alpha, board, 1 - alpha, 0, board)
 
 
 def draw_button(board, rect, label, hover_progress):
@@ -517,6 +512,11 @@ def update(dt):
     draw_border(display, border_color)
     state['display'] = display
 
+    # Update the texture for display
+    img = pyglet.image.ImageData(WINDOW_WIDTH, WINDOW_HEIGHT, 'BGR',
+                                  display.tobytes(), pitch=-WINDOW_WIDTH * 3)
+    _display_tex.blit_into(img, 0, 0, 0)
+
 
 # ---------- Setup ----------
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
@@ -534,13 +534,12 @@ print("Ready.")
 
 WINDOW_HEIGHT, WINDOW_WIDTH = first_frame.shape[:2]
 SCALE = min(WINDOW_WIDTH, WINDOW_HEIGHT) / 720.0
+_overlay_buf = np.empty_like(first_frame)
 
 window = pyglet.window.Window(WINDOW_WIDTH, WINDOW_HEIGHT, caption="AR Game")
-display_sprite = pyglet.sprite.Sprite(
-    pyglet.image.ImageData(WINDOW_WIDTH, WINDOW_HEIGHT, 'BGR',
-                           b'\x00' * (WINDOW_WIDTH * WINDOW_HEIGHT * 3),
-                           pitch=-WINDOW_WIDTH * 3)
-)
+# Create a texture to hold the display image, which will be updated each frame
+_display_tex = pyglet.image.Texture.create(WINDOW_WIDTH, WINDOW_HEIGHT)
+display_sprite = pyglet.sprite.Sprite(_display_tex)
 
 state = {
     'display': first_frame,
@@ -557,7 +556,6 @@ pyglet.clock.schedule_interval(update, 1 / UPDATE_HZ)
 @window.event
 def on_draw():
     window.clear()
-    display_sprite.image = cv2glet(state['display'], 'BGR')
     display_sprite.draw()
 
 

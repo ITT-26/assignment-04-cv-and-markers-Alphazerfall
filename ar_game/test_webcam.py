@@ -1,20 +1,30 @@
+import os
+
+# 1. CRITICAL: Disable Windows Media Foundation hardware transforms.
+# This MUST be set before importing cv2.
+os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
+
 import cv2
-cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+
+# 2. Switch from DirectShow (CAP_DSHOW) to Media Foundation (CAP_MSMF)
+cap = cv2.VideoCapture(0, cv2.CAP_MSMF)
+
+# 3. Request MJPG and 1080p
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-
-
-fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
-print("FOURCC:", "".join([chr((fourcc >> 8*i) & 0xFF) for i in range(4)]))
-print("FPS:", cap.get(cv2.CAP_PROP_FPS))
-print("Size:", int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), "x", int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+cap.set(cv2.CAP_PROP_FPS, 30)
 
 while True:
     ret, frame = cap.read()
-    if ret:
-        cv2.imshow("ID 1", frame)
+    if not ret:
+        print("Failed to grab frame")
+        break
+        
+    cv2.imshow("C920 MSMF Fix", frame)
+    
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
+
 cap.release()
 cv2.destroyAllWindows()
