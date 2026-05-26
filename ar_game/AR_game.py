@@ -21,27 +21,31 @@ if len(sys.argv) > 1:
 # --- ArUco / board detection ---
 CORNER_IDS = [0, 1, 2, 3]
 DETECT_SCALE = 1.0
-MAX_STALE_FRAMES = 15  # how many frames to keep showing the last board after losing detection
+MAX_STALE_FRAMES = 15   # how many frames to keep showing the last board after losing detection
 
 # --- Hand detection ---
 HAND_DETECT_MAX_W = 640  # cap finger-detection input width regardless of camera resolution
-ZERO_BORDER_PX = 45  # border area to ignore for hand detection, as it often contains noise
+ZERO_BORDER_PX = 45     # border area to ignore for hand detection, as it often contains noise
 MIN_HAND_AREA = 1500
 
 # --- App ---
 UPDATE_HZ = 30
-DEBUG_MASK = True  # show mask used for hand detection in a separate window
+DEBUG_MASK = False      # show mask used for hand detection in a separate window
 
 # --- Game ---
-GAME_DURATION = 60.0  # seconds per round
+GAME_DURATION = 60.0    # seconds per round
 GRID_COLS = 3
 GRID_ROWS = 3
 MOLE_RADIUS = 65
-MOLE_SHOW_TIME = 1.6
-MOLE_MIN_GAP = 0.4
-MOLE_MAX_GAP = 1.1
+MOLE_SHOW_TIME = 2.0
+MOLE_MIN_GAP = 0.5
+MOLE_MAX_GAP = 1.5
 MAX_ACTIVE_MOLES = 2
 HIT_HOVER_FRAMES = 3
+BOMB_CHANCE = 0.25      # probability a spawned mole is a bomb
+BOMB_PENALTY = 3        # points deducted for hitting a bomb
+DIFF_MAX_SCORE = 20     # score at which difficulty is fully ramped
+DIFF_MIN_FACTOR = 0.75  # minimum time/gap multiplier at full difficulty
 
 # Color Palette (BGR)
 COL_BG_PANEL    = (40, 40, 40)
@@ -54,6 +58,9 @@ COL_MOLE_HIT    = (80, 220, 120)
 COL_HOVER_RING  = (90, 200, 255)
 COL_BUTTON      = (90, 200, 255)
 COL_BUTTON_TXT  = (20, 20, 20)
+COL_BOMB_BODY   = (40,  40, 200)
+COL_BOMB_RIM    = (20,  20, 130)
+COL_BOMB_HIT    = (60,  60, 255)
 
 
 # ---------- Camera thread ----------
@@ -249,12 +256,11 @@ def draw_panel(board, top_left, bottom_right, color=COL_BG_PANEL, alpha=0.75):
 def draw_button(board, rect, label, hover_progress):
     x1, y1, x2, y2 = rect
     draw_panel(board, (x1, y1), (x2, y2), COL_BUTTON, alpha=0.85)
-    cv2.rectangle(board, (x1, y1), (x2, y2), COL_TEXT_DARK, px(3), cv2.LINE_AA)
     cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
     draw_text_centered(board, label, (cx, cy), SCALE * 1.1, COL_BUTTON_TXT, px(2), outline=False)
 
+    cv2.rectangle(board, (x1, y1), (x2, y2), COL_TEXT_DARK, px(3), cv2.LINE_AA)
     if hover_progress > 0:
-        cv2.rectangle(board, (x1, y1), (x2, y2), COL_MOLE_HIT, px(5), cv2.LINE_AA)
         bar_w = int((x2 - x1) * hover_progress)
         cv2.rectangle(board, (x1, y2 - px(6)), (x1 + bar_w, y2), COL_MOLE_HIT, -1, cv2.LINE_AA)
 
@@ -277,6 +283,7 @@ class WhackAMoleGame:
 
     def __init__(self):
         self.cells = self._grid_positions()
+        self.best_score = 0
         self._reset()
         self.screen = SCREEN_MENU
 
@@ -296,17 +303,18 @@ class WhackAMoleGame:
     @staticmethod
     def _start_button_rect():
         bw, bh = px(280), px(90)
-        cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + px(40)
+        cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + px(80)
         return (cx - bw // 2, cy - bh // 2, cx + bw // 2, cy + bh // 2)
 
     @staticmethod
     def _restart_button_rect():
         bw, bh = px(280), px(90)
-        cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + px(80)
+        cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + px(130)
         return (cx - bw // 2, cy - bh // 2, cx + bw // 2, cy + bh // 2)
 
     def _reset(self):
         self.moles = []
+        self.popups = []
         self.spawn_timer = MOLE_MIN_GAP
         self.score = 0
         self.time_left = GAME_DURATION
@@ -340,6 +348,7 @@ class WhackAMoleGame:
         self.time_left -= dt
         if self.time_left <= 0:
             self.time_left = 0
+            self.best_score = max(self.best_score, self.score)
             self.screen = SCREEN_RESULT
             self.button_hover_frames = 0
             self.moles = []
@@ -349,7 +358,8 @@ class WhackAMoleGame:
         self.spawn_timer -= dt
         if self.spawn_timer <= 0 and len(live_moles) < MAX_ACTIVE_MOLES:
             self._spawn_mole()
-            self.spawn_timer = random.uniform(MOLE_MIN_GAP, MOLE_MAX_GAP)
+            diff = self._difficulty()
+            self.spawn_timer = random.uniform(MOLE_MIN_GAP * diff, MOLE_MAX_GAP * diff)
 
         radius_px = px(MOLE_RADIUS)
 
@@ -360,14 +370,24 @@ class WhackAMoleGame:
 
             m['age'] += dt
 
+            life_pct = m['age'] / m['show_time']
+            if life_pct > 0.8:
+                hit_r = int(radius_px * max(0.0, (1.0 - life_pct) / 0.2))
+            else:
+                hit_r = radius_px
+
             if self.tracking_active and fingertip is not None:
                 dx = fingertip[0] - m['x']
                 dy = fingertip[1] - m['y']
-                if dx * dx + dy * dy <= radius_px * radius_px:
+                if hit_r > 0 and dx * dx + dy * dy <= hit_r * hit_r:
                     m['hover_frames'] += 1
                     if m['hover_frames'] >= HIT_HOVER_FRAMES:
                         m['hit'] = True
-                        self.score += 1
+                        if m['bomb']:
+                            self.score = max(0, self.score - BOMB_PENALTY)
+                        else:
+                            self.score += 1
+                        self.popups.append({'x': m['x'], 'y': m['y'], 'age': 0.0, 'bomb': m['bomb']})
                 else:
                     m['hover_frames'] = 0
             else:
@@ -376,8 +396,15 @@ class WhackAMoleGame:
         self.moles = [
             m for m in self.moles
             if (m['hit'] and m['hit_age'] < 0.3)
-            or (not m['hit'] and m['age'] < MOLE_SHOW_TIME)
+            or (not m['hit'] and m['age'] < m['show_time'])
         ]
+
+        for p in self.popups:
+            p['age'] += dt
+        self.popups = [p for p in self.popups if p['age'] < 0.7]
+
+    def _difficulty(self):
+        return max(DIFF_MIN_FACTOR, 1.0 - self.score / DIFF_MAX_SCORE * (1.0 - DIFF_MIN_FACTOR))
 
     def _spawn_mole(self):
         occupied = {(m['x'], m['y']) for m in self.moles}
@@ -387,6 +414,8 @@ class WhackAMoleGame:
         x, y = random.choice(free)
         self.moles.append({
             'x': x, 'y': y, 'age': 0.0,
+            'show_time': MOLE_SHOW_TIME * self._difficulty(),
+            'bomb': random.random() < BOMB_CHANCE,
             'hit': False, 'hit_age': 0.0, 'hover_frames': 0,
         })
 
@@ -406,6 +435,10 @@ class WhackAMoleGame:
         draw_text_centered(board, f"Hit as many moles as you can in {int(GAME_DURATION)} seconds",
                            (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - px(40)),
                            SCALE * 0.7, COL_TEXT, px(1))
+        if self.best_score > 0:
+            draw_text_centered(board, f"Highscore: {self.best_score}",
+                               (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + px(15)),
+                               SCALE * 0.75, COL_ACCENT, px(2))
 
         rect = self._start_button_rect()
         progress = self.button_hover_frames / self.BUTTON_HOLD_FRAMES
@@ -418,26 +451,39 @@ class WhackAMoleGame:
     def _draw_playing(self, board):
         radius_px = px(MOLE_RADIUS)
 
+        # Holes are always visible at every grid cell
+        for cx, cy in self.cells:
+            draw_circle_alpha(board, (cx, cy), int(radius_px * 0.92), (10, 10, 10), 0.8)
+
         for m in self.moles:
             cx, cy = m['x'], m['y']
+
+            col_body = COL_BOMB_BODY if m['bomb'] else COL_MOLE_BODY
+            col_rim  = COL_BOMB_RIM  if m['bomb'] else COL_MOLE_RIM
+            col_hit  = COL_BOMB_HIT  if m['bomb'] else COL_MOLE_HIT
 
             if m['hit']:
                 grow = 1.0 + m['hit_age'] / 0.3 * 0.7
                 cv2.circle(board, (cx, cy), int(radius_px * grow),
-                           COL_MOLE_HIT, px(5), cv2.LINE_AA)
+                           col_hit, px(5), cv2.LINE_AA)
             else:
-                life_pct = m['age'] / MOLE_SHOW_TIME
-                if life_pct < 0.08:  # quick fade-in
-                    alpha = life_pct / 0.08
-                elif life_pct > 0.6:  # fade-out over last 40%
+                life_pct = m['age'] / m['show_time']
+                if life_pct < 0.12:  # scale in from zero
+                    scale_r = life_pct / 0.12
+                    alpha = 1.0
+                elif life_pct > 0.6:  # fade out over last 40%
+                    scale_r = 1.0
                     alpha = max(0.0, (1.0 - life_pct) / 0.4)
                 else:
+                    scale_r = 1.0
                     alpha = 1.0
 
-                draw_circle_alpha(board, (cx + px(4), cy + px(6)), radius_px,
-                                  (20, 20, 20), alpha * 0.7)
-                draw_circle_alpha(board, (cx, cy), radius_px, COL_MOLE_BODY, alpha)
-                draw_circle_alpha(board, (cx, cy), radius_px, COL_MOLE_RIM, alpha, px(3))
+                r = int(radius_px * scale_r)
+                if r > 0:
+                    draw_circle_alpha(board, (cx + px(4), cy + px(6)), r,
+                                      (20, 20, 20), alpha * 0.7)
+                    draw_circle_alpha(board, (cx, cy), r, col_body, alpha)
+                    draw_circle_alpha(board, (cx, cy), r, col_rim,  alpha, px(3))
 
                 if m['hover_frames'] > 0:
                     pct = min(1.0, m['hover_frames'] / HIT_HOVER_FRAMES)
@@ -445,6 +491,14 @@ class WhackAMoleGame:
                                 (radius_px + px(10), radius_px + px(10)),
                                 -90, 0, int(360 * pct),
                                 COL_HOVER_RING, px(4), cv2.LINE_AA)
+
+        for p in self.popups:
+            t = p['age'] / 0.7
+            y_off = int(px(80) * t)
+            text  = f"-{BOMB_PENALTY}" if p['bomb'] else "+1"
+            color = COL_BOMB_HIT  if p['bomb'] else COL_MOLE_HIT
+            draw_text_centered(board, text, (p['x'], p['y'] - y_off),
+                               SCALE * 1.1, color, px(2))
 
         # HUD bar at the top
         bar_h = px(60)
@@ -468,8 +522,14 @@ class WhackAMoleGame:
                            (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - px(160)),
                            SCALE * 1.8, COL_ACCENT, px(3))
         draw_text_centered(board, f"Score: {self.score}",
-                           (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - px(40)),
+                           (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - px(60)),
                            SCALE * 2.0, COL_TEXT, px(3))
+        new_best = self.score == self.best_score and self.score > 0
+        best_label = f"Highscore: {self.best_score}  NEW!" if new_best else f"Highscore: {self.best_score}"
+        best_color = COL_MOLE_HIT if new_best else COL_ACCENT
+        draw_text_centered(board, best_label,
+                           (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + px(30)),
+                           SCALE * 0.85, best_color, px(2))
 
         rect = self._restart_button_rect()
         progress = self.button_hover_frames / self.BUTTON_HOLD_FRAMES
