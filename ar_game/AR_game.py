@@ -63,7 +63,7 @@ class CameraThread:
         self.thread.start()
 
     def _set_max_resolution(self):
-        resolutions = [(1280, 720), (640, 480)]
+        resolutions = [(1920, 1080), (1280, 720), (640, 480)]
         for w, h in resolutions:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
@@ -256,6 +256,15 @@ def draw_button(board, rect, label, hover_progress):
         cv2.rectangle(board, (x1, y1), (x2, y2), COL_MOLE_HIT, px(5), cv2.LINE_AA)
         bar_w = int((x2 - x1) * hover_progress)
         cv2.rectangle(board, (x1, y2 - px(6)), (x1 + bar_w, y2), COL_MOLE_HIT, -1, cv2.LINE_AA)
+
+
+def draw_waiting_screen(board):
+    draw_text_centered(board, "SHOW THE BOARD TO THE CAMERA",
+                       (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - px(20)),
+                       SCALE * 1.2, COL_ACCENT, px(3))
+    draw_text_centered(board, "Make sure all 4 corner markers are visible",
+                       (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + px(40)),
+                       SCALE * 0.6, COL_TEXT, px(1))
 
 
 # ---------- Game ----------
@@ -481,7 +490,8 @@ def update(dt):
     if board is not None:
         state['last_board'] = board
         state['stale_frames'] = 0
-        display = cv2.flip(board.copy(), 1)  # mirror for more intuitive interaction
+        state['board_ever_detected'] = True
+        display = cv2.flip(board.copy(), 1)
         fingertip = find_fingertip(display)
         border_color = (0, 255, 0)
         tracking_active = True
@@ -497,8 +507,12 @@ def update(dt):
         border_color = (0, 0, 255)
         tracking_active = False
 
-    game.update(fingertip, dt, tracking_active)
-    game.draw(display)
+    if state['board_ever_detected']:
+        game.update(fingertip, dt, tracking_active)
+        game.draw(display)
+    else:
+        draw_waiting_screen(display)
+
     draw_finger_overlay(display, fingertip)
     draw_border(display, border_color)
     state['display'] = display
@@ -532,6 +546,7 @@ state = {
     'display': first_frame,
     'last_board': None,
     'stale_frames': 0,
+    'board_ever_detected': False,
 }
 
 game = WhackAMoleGame()
