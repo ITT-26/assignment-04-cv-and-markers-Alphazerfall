@@ -1,7 +1,6 @@
 import os
 
-# 1. CRITICAL: Disable Windows Media Foundation hardware transforms.
-# This MUST be set before importing cv2.
+# Disabling the Windows Media Foundation hardware transforms allows the C920 to properly deliver MJPG frames at 1080p, which is essential for our AR game.
 os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 
 import cv2
