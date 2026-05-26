@@ -40,7 +40,7 @@ python image_extractor.py -i sample_image.jpg -o unwarped.jpg --width 750 --heig
 
 **Usage**
 
-- The input image opens in the *Selection Window*. Click four corners of the region you want to extract — the selected points and connecting lines are drawn as you go.
+- The input image opens in the *Selection Window*. Click four corners of the region you want to extract. The selected points and connecting lines are drawn as you go.
 - After the fourth click the *Result Window* opens with the warped image.
 - Press `S` in either window to save the warped image to the output path.
 - Press `ESC` to discard the current selection (and close the result window) so you can start over.
@@ -67,12 +67,19 @@ Print four ArUco markers from the `DICT_6X6_250` dictionary with IDs `0`, `1`, `
 
 **Gameplay**
 
-The region between the four markers is detected, perspective-warped to fill the window, and mirrored. Reach into the board with one pointing finger — a red dot marks the detected fingertip.
+The region between the four markers is detected, perspective-warped to fill the window, and mirrored. Reach into the board with one pointing finger. A red dot marks the detected fingertip. Any object with a clear tip works too (e.g. a pen), as long as it is held from the bottom of the image so the tip is the topmost visible point.
 
 - On the menu screen, hold your finger over the **START** button to begin a round.
 - During the round, hold your finger on a mole for a few frames to whack it. Score as many hits as you can in 60 seconds.
-- Moles fade in when they appear and fade out as their time runs out, so you can see how long you have to react.
+- Moles scale in when they appear and fade out as their time runs out. The hit area stays constant throughout, so a hit registers even on a nearly-invisible mole.
+- **Bomb moles** appear in red. Hitting one deducts 3 points instead of awarding one.
+- As your score climbs, moles appear faster and disappear sooner. Difficulty is fully ramped at 20 points.
+- Your **session highscore** is shown on the result screen and carried back to the menu between rounds.
 - On the result screen, hold your finger over **PLAY AGAIN** for another round.
+
+**Screenshots**
+
+![Gameplay with finger](images/gameplay_finger.png) ![Gameplay with pen](images/gameplay_pen.png)
 
 **Border colors**
 

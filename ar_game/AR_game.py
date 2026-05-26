@@ -370,11 +370,7 @@ class WhackAMoleGame:
 
             m['age'] += dt
 
-            life_pct = m['age'] / m['show_time']
-            if life_pct > 0.8:
-                hit_r = int(radius_px * max(0.0, (1.0 - life_pct) / 0.2))
-            else:
-                hit_r = radius_px
+            hit_r = radius_px
 
             if self.tracking_active and fingertip is not None:
                 dx = fingertip[0] - m['x']
@@ -528,7 +524,7 @@ class WhackAMoleGame:
         best_label = f"Highscore: {self.best_score}  NEW!" if new_best else f"Highscore: {self.best_score}"
         best_color = COL_MOLE_HIT if new_best else COL_ACCENT
         draw_text_centered(board, best_label,
-                           (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + px(30)),
+                           (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - px(10)),
                            SCALE * 0.85, best_color, px(2))
 
         rect = self._restart_button_rect()
